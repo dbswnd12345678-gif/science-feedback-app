@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from langchain_core.messages import HumanMessage
 
-from graph import agent
+from graph import agent, _memory
 
 app = FastAPI(title="과학 관찰 피드백 앱")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -16,6 +16,15 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+
+def _clear_thread(thread_id: str):
+    """MemorySaver에서 해당 thread의 오염된 상태를 삭제합니다."""
+    try:
+        if hasattr(_memory, "storage") and thread_id in _memory.storage:
+            del _memory.storage[thread_id]
+    except Exception:
+        pass
 
 
 @app.websocket("/ws")
@@ -41,54 +50,45 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await websocket.send_json({"type": "start"})
 
-            try:
+            async def stream(cfg):
                 async for event in agent.astream_events(
                     {"messages": [message]},
-                    config=config,
+                    config=cfg,
                     version="v2",
                 ):
                     kind = event["event"]
-
-                    # 텍스트 청크 스트리밍
                     if kind == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
-                        if chunk.content:
-                            content = chunk.content
-                            # Claude는 리스트 형식으로 content를 반환하기도 함
-                            if isinstance(content, list):
-                                for block in content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        await websocket.send_json({
-                                            "type": "chunk",
-                                            "content": block["text"],
-                                        })
-                            elif isinstance(content, str) and content:
-                                await websocket.send_json({
-                                    "type": "chunk",
-                                    "content": content,
-                                })
-
-                    # Tool 호출 시작 알림
+                        content = chunk.content
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    await websocket.send_json({"type": "chunk", "content": block["text"]})
+                        elif isinstance(content, str) and content:
+                            await websocket.send_json({"type": "chunk", "content": content})
                     elif kind == "on_tool_start":
-                        tool_name = event.get("name", "")
-                        await websocket.send_json({
-                            "type": "tool_start",
-                            "tool": tool_name,
-                        })
-
-                    # Tool 완료 알림
+                        await websocket.send_json({"type": "tool_start", "tool": event.get("name", "")})
                     elif kind == "on_tool_end":
-                        tool_name = event.get("name", "")
-                        await websocket.send_json({
-                            "type": "tool_end",
-                            "tool": tool_name,
-                        })
+                        await websocket.send_json({"type": "tool_end", "tool": event.get("name", "")})
 
-            except Exception as agent_error:
-                await websocket.send_json({
-                    "type": "error",
-                    "content": f"에이전트 오류: {str(agent_error)}",
-                })
+            try:
+                await stream(config)
+            except Exception as e:
+                error_msg = str(e)
+                is_history_error = (
+                    "INVALID_CHAT_HISTORY" in error_msg
+                    or "tool_calls that do not have" in error_msg
+                    or "InvalidChatHistory" in type(e).__name__
+                )
+                if is_history_error:
+                    # 오염된 대화 이력 초기화 후 재시도
+                    _clear_thread(student_id)
+                    try:
+                        await stream(config)
+                    except Exception as retry_err:
+                        await websocket.send_json({"type": "error", "content": str(retry_err)})
+                else:
+                    await websocket.send_json({"type": "error", "content": error_msg})
 
             await websocket.send_json({"type": "done"})
 

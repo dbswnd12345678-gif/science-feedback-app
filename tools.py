@@ -26,7 +26,6 @@ COL_MAP: dict[tuple, str] = {
 
 RESPONSE_SLOTS = [f"O{r}" for r in range(2, 12)]   # O2 ~ O11 (N열은 레이블 유지)
 TEMPLATE_SHEET_NAME = "시트1"
-PLACEHOLDER_PATTERN = re.compile(r"^응답 문장 \d+$")
 
 
 def _get_sheets_service():
@@ -36,17 +35,20 @@ def _get_sheets_service():
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 
-    # 클라우드: 환경변수에 JSON 내용 전체가 들어있는 경우
-    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if sa_json:
-        info = json.loads(sa_json)
+    sa_json_env = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    sa_file_env = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "")
+
+    # GOOGLE_SERVICE_ACCOUNT_JSON 우선 (Railway 등 클라우드 환경)
+    if sa_json_env:
+        info = json.loads(sa_json_env)
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+    # GOOGLE_SERVICE_ACCOUNT_FILE이 JSON 내용 자체인 경우 자동 감지
+    elif sa_file_env.strip().startswith("{"):
+        info = json.loads(sa_file_env)
         creds = Credentials.from_service_account_info(info, scopes=scopes)
     else:
         # 로컬: JSON 파일 경로 사용
-        creds = Credentials.from_service_account_file(
-            os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"],
-            scopes=scopes,
-        )
+        creds = Credentials.from_service_account_file(sa_file_env, scopes=scopes)
 
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
@@ -202,86 +204,70 @@ def write_to_sheet(
     """
     학생별 시트 탭에 두 가지를 기록합니다.
     1. 6차원 분류에 해당하는 분류 행렬 셀의 카운트를 +1 합니다.
-    2. N2~N11 중 다음 빈 슬롯에 관찰 텍스트와 분류 태그를 기록합니다.
+    2. O2~O11 중 다음 빈 슬롯에 관찰 텍스트와 분류 태그를 기록합니다.
     학생 탭이 없으면 시트1을 복제하여 자동 생성합니다.
+    예외가 발생해도 항상 문자열을 반환합니다(LangGraph ToolMessage 보장).
     """
-    spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
-    service = _get_sheets_service()
-
-    # 1. 학생 탭 확보
-    sheet_title = _get_or_create_student_sheet(service, spreadsheet_id, student_id)
-
-    # 2. 행렬 셀 주소 계산
-    row = ROW_MAP.get((sense, method, measurement))
-    col = COL_MAP.get((time, comparison, scope))
-    if row is None or col is None:
-        return (
-            f"오류: 분류 조합을 찾을 수 없습니다. "
-            f"입력값 — sense={sense}, method={method}, measurement={measurement}, "
-            f"time={time}, comparison={comparison}, scope={scope}"
-        )
-    matrix_cell = f"{col}{row}"
-
-    # 3. 현재 행렬 셀 값 읽기
-    read_result = (
-        service.spreadsheets()
-        .values()
-        .get(
-            spreadsheetId=spreadsheet_id,
-            range=_safe_range(sheet_title, matrix_cell),
-        )
-        .execute()
-    )
-    raw = read_result.get("values", [[""]])[0][0] if read_result.get("values") else ""
     try:
-        current_count = int(raw)
-    except (ValueError, TypeError):
-        current_count = 0
+        spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
+        service = _get_sheets_service()
 
-    # 4. 응답 문장 슬롯(N2~N11) 중 다음 빈 슬롯 탐색
-    n_result = (
-        service.spreadsheets()
-        .values()
-        .get(
+        # 1. 학생 탭 확보
+        sheet_title = _get_or_create_student_sheet(service, spreadsheet_id, student_id)
+
+        # 2. 행렬 셀 주소 계산
+        row = ROW_MAP.get((sense, method, measurement))
+        col = COL_MAP.get((time, comparison, scope))
+        if row is None or col is None:
+            return (
+                f"오류: 분류 조합을 찾을 수 없습니다. "
+                f"입력값 — sense={sense}, method={method}, measurement={measurement}, "
+                f"time={time}, comparison={comparison}, scope={scope}"
+            )
+        matrix_cell = f"{col}{row}"
+
+        # 3. 현재 행렬 셀 값 읽기
+        read_result = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, matrix_cell))
+            .execute()
+        )
+        raw = read_result.get("values", [[""]])[0][0] if read_result.get("values") else ""
+        try:
+            current_count = int(raw)
+        except (ValueError, TypeError):
+            current_count = 0
+
+        # 4. 응답 문장 슬롯(O2~O11) 중 다음 빈 슬롯 탐색
+        n_result = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, "O2:O11"))
+            .execute()
+        )
+        n_values = n_result.get("values", [])
+        next_slot: str | None = None
+        for i in range(10):
+            cell_val = n_values[i][0].strip() if i < len(n_values) and n_values[i] else ""
+            if not cell_val:
+                next_slot = f"O{i + 2}"
+                break
+
+        # 5. 배치 업데이트
+        tag = f"<{sense}, {method}, {measurement}> <{scope}, {comparison}, {time}>"
+        response_text = f"{observation_text} {tag}"
+        updates = [{"range": _safe_range(sheet_title, matrix_cell), "values": [[current_count + 1]]}]
+        if next_slot:
+            updates.append({"range": _safe_range(sheet_title, next_slot), "values": [[response_text]]})
+
+        service.spreadsheets().values().batchUpdate(
             spreadsheetId=spreadsheet_id,
-            range=_safe_range(sheet_title, "O2:O11"),
-        )
-        .execute()
-    )
-    n_values = n_result.get("values", [])
-    next_slot: str | None = None
-    for i in range(10):
-        cell_val = n_values[i][0].strip() if i < len(n_values) and n_values[i] else ""
-        if not cell_val:
-            next_slot = f"O{i + 2}"
-            break
+            body={"valueInputOption": "RAW", "data": updates},
+        ).execute()
 
-    # 5. 배치 업데이트
-    tag = f"<{sense}, {method}, {measurement}> <{scope}, {comparison}, {time}>"
-    response_text = f"{observation_text} {tag}"
+        slot_msg = f"{next_slot}에 응답 문장 저장" if next_slot else "응답 문장 슬롯이 가득 찼습니다(10개 초과)"
+        return f"기록 완료 — 학생: {student_id}, 행렬 셀: {matrix_cell} → {current_count + 1}, {slot_msg}"
 
-    updates = [
-        {
-            "range": _safe_range(sheet_title, matrix_cell),
-            "values": [[current_count + 1]],
-        }
-    ]
-    if next_slot:
-        updates.append(
-            {
-                "range": _safe_range(sheet_title, next_slot),
-                "values": [[response_text]],
-            }
-        )
-
-    service.spreadsheets().values().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={"valueInputOption": "RAW", "data": updates},
-    ).execute()
-
-    slot_msg = f"{next_slot}에 응답 문장 저장" if next_slot else "응답 문장 슬롯이 가득 찼습니다(10개 초과)"
-    return (
-        f"기록 완료 — 학생: {student_id}, "
-        f"행렬 셀: {matrix_cell} → {current_count + 1}, "
-        f"{slot_msg}"
-    )
+    except Exception as e:
+        return f"스프레드시트 기록 실패: {type(e).__name__}: {str(e)[:200]}"
