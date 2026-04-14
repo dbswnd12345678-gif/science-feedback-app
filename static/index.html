@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>과학 관찰 피드백</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+    body { font-family: 'Noto Sans KR', sans-serif; }
+    .typing-cursor::after { content: '|'; animation: blink 0.8s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .tool-badge { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    #chat-area { scroll-behavior: smooth; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen flex flex-col items-center justify-start py-10 px-4">
+
+  <!-- 헤더 -->
+  <div class="w-full max-w-2xl mb-6 text-center">
+    <h1 class="text-2xl font-bold text-slate-800">과학적 관찰 평가</h1>
+    <p class="text-sm text-slate-500 mt-1">관찰한 내용을 입력하면 채점과 피드백을 받을 수 있습니다.</p>
+  </div>
+
+  <!-- 입력 카드 -->
+  <div class="w-full max-w-2xl bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+    <div class="mb-4">
+      <label class="block text-sm font-medium text-slate-700 mb-1">학번을 입력해주세요</label>
+      <input
+        id="student-id"
+        type="text"
+        placeholder="예) 20240101"
+        class="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
+      />
+    </div>
+    <div class="mb-5">
+      <label class="block text-sm font-medium text-slate-700 mb-1">관찰한 내용을 입력해주세요</label>
+      <textarea
+        id="observation"
+        rows="3"
+        placeholder="예) 단풍나무 겨울눈의 길이가 1.5mm이다."
+        class="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition resize-none"
+      ></textarea>
+    </div>
+    <button
+      id="submit-btn"
+      onclick="submitObservation()"
+      class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      제출
+    </button>
+  </div>
+
+  <!-- 채팅 영역 -->
+  <div id="chat-area" class="w-full max-w-2xl flex flex-col gap-4"></div>
+
+  <script>
+    let ws = null;
+    let currentBubble = null;
+    let currentText = '';
+    let isProcessing = false;
+
+    function getWebSocket() {
+      if (ws && ws.readyState === WebSocket.OPEN) return ws;
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${location.host}/ws`);
+      ws.onmessage = handleMessage;
+      ws.onerror = () => appendError('서버 연결 오류가 발생했습니다.');
+      ws.onclose = () => { ws = null; };
+      return ws;
+    }
+
+    function submitObservation() {
+      if (isProcessing) return;
+      const studentId = document.getElementById('student-id').value.trim();
+      const observation = document.getElementById('observation').value.trim();
+
+      if (!studentId) { alert('학번을 입력해주세요.'); return; }
+      if (!observation) { alert('관찰 내용을 입력해주세요.'); return; }
+
+      const socket = getWebSocket();
+      const payload = { student_id: studentId, observation };
+
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(payload));
+      } else {
+        socket.onopen = () => socket.send(JSON.stringify(payload));
+      }
+    }
+
+    function handleMessage(event) {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'start') {
+        isProcessing = true;
+        setSubmitState(false);
+        appendStudentBubble();
+        currentBubble = appendAgentBubble();
+        currentText = '';
+      }
+      else if (data.type === 'chunk') {
+        currentText += data.content;
+        renderAgentBubble(currentBubble, currentText, true);
+      }
+      else if (data.type === 'tool_start') {
+        showToolBadge(data.tool, true);
+      }
+      else if (data.type === 'tool_end') {
+        showToolBadge(data.tool, false);
+      }
+      else if (data.type === 'done') {
+        if (currentBubble) renderAgentBubble(currentBubble, currentText, false);
+        currentBubble = null;
+        currentText = '';
+        isProcessing = false;
+        setSubmitState(true);
+        document.getElementById('observation').value = '';
+        scrollToBottom();
+      }
+      else if (data.type === 'error') {
+        appendError(data.content);
+        isProcessing = false;
+        setSubmitState(true);
+      }
+    }
+
+    function appendStudentBubble() {
+      const studentId = document.getElementById('student-id').value.trim();
+      const obs = document.getElementById('observation').value.trim();
+      const area = document.getElementById('chat-area');
+      const div = document.createElement('div');
+      div.className = 'flex flex-col items-end';
+      div.innerHTML = `
+        <span class="text-xs text-slate-400 mb-1">학번 ${escHtml(studentId)}</span>
+        <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-prose text-sm leading-relaxed">
+          ${escHtml(obs)}
+        </div>
+      `;
+      area.appendChild(div);
+      scrollToBottom();
+    }
+
+    function appendAgentBubble() {
+      const area = document.getElementById('chat-area');
+      const wrapper = document.createElement('div');
+      wrapper.className = 'flex flex-col items-start';
+
+      const label = document.createElement('span');
+      label.className = 'text-xs text-slate-400 mb-1';
+      label.textContent = '평가 에이전트';
+
+      const toolRow = document.createElement('div');
+      toolRow.className = 'flex gap-2 flex-wrap mb-2 tool-row';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 max-w-prose text-sm leading-relaxed text-slate-800 shadow-sm';
+      bubble.innerHTML = '<span class="typing-cursor text-slate-400">생각 중...</span>';
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(toolRow);
+      wrapper.appendChild(bubble);
+      area.appendChild(wrapper);
+      scrollToBottom();
+      return wrapper;
+    }
+
+    function renderAgentBubble(wrapper, text, typing) {
+      const bubble = wrapper.querySelector('div:last-child');
+      const formatted = formatResponse(text);
+      bubble.innerHTML = formatted + (typing ? '<span class="typing-cursor"></span>' : '');
+      scrollToBottom();
+    }
+
+    function showToolBadge(toolName, active) {
+      if (!currentBubble) return;
+      const toolRow = currentBubble.querySelector('.tool-row');
+      if (!toolRow) return;
+
+      const labelMap = {
+        get_scoring_criteria: '배점 기준 조회',
+        get_feedback_criteria: '피드백 기준 조회',
+        get_classification_criteria: '분류 기준 조회',
+        write_to_sheet: '스프레드시트 기록',
+      };
+      const label = labelMap[toolName] || toolName;
+
+      let badge = toolRow.querySelector(`[data-tool="${toolName}"]`);
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.dataset.tool = toolName;
+        badge.className = 'tool-badge text-xs px-2.5 py-1 rounded-full border font-medium';
+        toolRow.appendChild(badge);
+      }
+      if (active) {
+        badge.className = 'tool-badge text-xs px-2.5 py-1 rounded-full border font-medium bg-amber-50 border-amber-300 text-amber-700 animate-pulse';
+        badge.textContent = `⚙ ${label}`;
+      } else {
+        badge.className = 'tool-badge text-xs px-2.5 py-1 rounded-full border font-medium bg-green-50 border-green-300 text-green-700';
+        badge.textContent = `✓ ${label}`;
+        badge.style.animation = 'none';
+      }
+    }
+
+    function formatResponse(text) {
+      // 점수 패턴 하이라이트
+      let html = escHtml(text);
+
+      // 분류 태그 <시각, 단순, 정성> 강조
+      html = html.replace(/&lt;([^&]+)&gt;/g, (_, inner) =>
+        `<span class="inline-block bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded px-1.5 py-0.5 mx-0.5 font-mono">&lt;${inner}&gt;</span>`
+      );
+
+      // 점수 강조 (예: 2점, 1점)
+      html = html.replace(/(\d+)점/g, (_, n) => {
+        const colors = { '0': 'bg-red-100 text-red-700', '1': 'bg-orange-100 text-orange-700', '2': 'bg-yellow-100 text-yellow-700', '3': 'bg-green-100 text-green-700' };
+        const cls = colors[n] || 'bg-slate-100 text-slate-700';
+        return `<span class="inline-block ${cls} text-xs font-bold rounded px-1.5 py-0.5 mx-0.5">${n}점</span>`;
+      });
+
+      // 줄바꿈
+      html = html.replace(/\n/g, '<br>');
+
+      // · 항목 들여쓰기
+      html = html.replace(/(·[^\n<]*)/g, '<span class="block pl-3 text-slate-600">$1</span>');
+
+      return html;
+    }
+
+    function appendError(msg) {
+      const area = document.getElementById('chat-area');
+      const div = document.createElement('div');
+      div.className = 'bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3';
+      div.textContent = msg;
+      area.appendChild(div);
+      scrollToBottom();
+    }
+
+    function setSubmitState(enabled) {
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = !enabled;
+      btn.textContent = enabled ? '제출' : '평가 중...';
+    }
+
+    function scrollToBottom() {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+
+    function escHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Enter 키로 제출 (Shift+Enter는 줄바꿈)
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('observation').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitObservation(); }
+      });
+    });
+  </script>
+</body>
+</html>

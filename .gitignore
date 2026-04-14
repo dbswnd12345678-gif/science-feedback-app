@@ -1,0 +1,22 @@
+# 환경변수 및 민감 정보
+.env
+*.json
+!requirements.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
