@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>과학 관찰 피드백</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
     body { font-family: 'Noto Sans KR', sans-serif; }
@@ -182,6 +183,8 @@
         get_feedback_criteria: '피드백 기준 조회',
         get_classification_criteria: '분류 기준 조회',
         write_to_sheet: '스프레드시트 기록',
+        get_student_memory: '학생 기억 조회',
+        update_student_memory: '학생 기억 저장',
       };
       const label = labelMap[toolName] || toolName;
 
@@ -203,26 +206,33 @@
     }
 
     function formatResponse(text) {
-      // 점수 패턴 하이라이트
-      let html = escHtml(text);
+      // 분류 태그 <시각, 단순, 정성> 를 임시 플레이스홀더로 보호 (marked가 HTML 태그로 오인 방지)
+      const tagPlaceholders = [];
+      let protected_text = text.replace(/<([^>]+)>/g, (match, inner) => {
+        // 한글이 포함된 태그만 보호 (HTML 태그와 구분)
+        if (/[가-힣]/.test(inner)) {
+          const idx = tagPlaceholders.length;
+          tagPlaceholders.push(inner);
+          return `%%TAG${idx}%%`;
+        }
+        return match;
+      });
 
-      // 분류 태그 <시각, 단순, 정성> 강조
-      html = html.replace(/&lt;([^&]+)&gt;/g, (_, inner) =>
-        `<span class="inline-block bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded px-1.5 py-0.5 mx-0.5 font-mono">&lt;${inner}&gt;</span>`
-      );
+      // marked.js로 마크다운 렌더링
+      let html = marked.parse(protected_text);
 
-      // 점수 강조 (예: 2점, 1점)
+      // 플레이스홀더를 분류 태그 스타일로 복원
+      html = html.replace(/%%TAG(\d+)%%/g, (_, idx) => {
+        const inner = tagPlaceholders[parseInt(idx)];
+        return `<span class="inline-block bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded px-1.5 py-0.5 mx-0.5 font-mono">&lt;${inner}&gt;</span>`;
+      });
+
+      // 점수 강조 (예: 2점, 1점) — 이미 렌더링된 HTML에 적용
       html = html.replace(/(\d+)점/g, (_, n) => {
         const colors = { '0': 'bg-red-100 text-red-700', '1': 'bg-orange-100 text-orange-700', '2': 'bg-yellow-100 text-yellow-700', '3': 'bg-green-100 text-green-700' };
         const cls = colors[n] || 'bg-slate-100 text-slate-700';
         return `<span class="inline-block ${cls} text-xs font-bold rounded px-1.5 py-0.5 mx-0.5">${n}점</span>`;
       });
-
-      // 줄바꿈
-      html = html.replace(/\n/g, '<br>');
-
-      // · 항목 들여쓰기
-      html = html.replace(/(·[^\n<]*)/g, '<span class="block pl-3 text-slate-600">$1</span>');
 
       return html;
     }
