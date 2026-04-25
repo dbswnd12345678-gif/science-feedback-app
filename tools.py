@@ -2,6 +2,17 @@ import os
 import re
 from langchain_core.tools import tool
 
+
+# ── Mem0 클라이언트 (장기 기억) ───────────────────────────────────────────────
+
+def _get_mem0_client():
+    """Mem0 클라이언트를 반환합니다. MEM0_API_KEY가 없으면 None을 반환합니다."""
+    api_key = os.environ.get("MEM0_API_KEY", "")
+    if not api_key:
+        return None
+    from mem0 import MemoryClient
+    return MemoryClient(api_key=api_key)
+
 # ── 분류 행렬 셀 주소 매핑 ──────────────────────────────────────────────────
 
 ROW_MAP: dict[tuple, int] = {
@@ -271,3 +282,53 @@ def write_to_sheet(
 
     except Exception as e:
         return f"스프레드시트 기록 실패: {type(e).__name__}: {str(e)[:200]}"
+
+
+# ── 장기 기억 Tools (Mem0) ────────────────────────────────────────────────────
+
+@tool
+def get_student_memory(student_id: str) -> str:
+    """
+    학생의 장기 기억을 조회합니다.
+    이전 관찰문 제출 패턴, 점수 변화, 강점과 약점 정보를 반환합니다.
+    새 관찰문을 평가하기 전에 반드시 호출하여 개인화된 피드백을 준비하세요.
+    MEM0_API_KEY가 설정되지 않은 경우 첫 번째 관찰로 처리됩니다.
+    """
+    try:
+        client = _get_mem0_client()
+        if client is None:
+            return "장기 기억 저장소가 설정되지 않았습니다. 이번이 첫 번째 관찰 평가로 처리됩니다."
+
+        results = client.search(
+            query="학생의 관찰 패턴, 점수, 강점, 약점",
+            user_id=student_id,
+            limit=10,
+        )
+        if not results:
+            return f"학생 {student_id}의 이전 기록이 없습니다. 첫 번째 관찰 평가입니다."
+
+        memories = [r["memory"] for r in results if "memory" in r]
+        return f"[학생 {student_id} 장기 기억]\n" + "\n".join(f"- {m}" for m in memories)
+
+    except Exception as e:
+        return f"장기 기억 조회 실패: {type(e).__name__}: {str(e)[:200]}"
+
+
+@tool
+def update_student_memory(student_id: str, summary: str) -> str:
+    """
+    이번 관찰 평가 결과를 학생의 장기 기억에 저장합니다.
+    스프레드시트 기록(Step 4) 직후, 결과 반환(Step 5) 이전에 호출하세요.
+    summary에는 이번 관찰의 점수, 분류 결과, 주요 특징, 개선이 필요한 점을 포함하세요.
+    MEM0_API_KEY가 설정되지 않은 경우 저장을 건너뜁니다.
+    """
+    try:
+        client = _get_mem0_client()
+        if client is None:
+            return "장기 기억 저장소가 설정되지 않아 저장을 건너뜁니다."
+
+        client.add(summary, user_id=student_id)
+        return f"학생 {student_id}의 장기 기억 업데이트 완료."
+
+    except Exception as e:
+        return f"장기 기억 저장 실패: {type(e).__name__}: {str(e)[:200]}"

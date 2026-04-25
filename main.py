@@ -2,14 +2,46 @@ from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
+import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from langchain_core.messages import HumanMessage
 
-from graph import agent, _memory
+from graph import build_agent
 
-app = FastAPI(title="과학 관찰 피드백 앱")
+# 전역 에이전트 (lifespan에서 초기화)
+agent = None
+_checkpointer = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """서버 시작/종료 시 PostgreSQL 연결을 관리합니다."""
+    global agent, _checkpointer
+
+    db_url = os.environ.get("DATABASE_URL", "")
+
+    if db_url:
+        # 클라우드(Railway): PostgreSQL 기반 영속 메모리
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        async with AsyncPostgresSaver.from_conn_string(db_url) as cp:
+            await cp.setup()  # 체크포인트 테이블 자동 생성
+            _checkpointer = cp
+            agent = build_agent(cp)
+            yield
+    else:
+        # 로컬 개발: RAM 기반 임시 메모리 (DATABASE_URL 없을 때)
+        from langgraph.checkpoint.memory import MemorySaver
+        cp = MemorySaver()
+        _checkpointer = cp
+        agent = build_agent(cp)
+        yield
+
+
+app = FastAPI(title="과학 관찰 피드백 앱", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -19,10 +51,10 @@ async def root():
 
 
 def _clear_thread(thread_id: str):
-    """MemorySaver에서 해당 thread의 오염된 상태를 삭제합니다."""
+    """MemorySaver 환경에서 오염된 thread 상태를 삭제합니다."""
     try:
-        if hasattr(_memory, "storage") and thread_id in _memory.storage:
-            del _memory.storage[thread_id]
+        if hasattr(_checkpointer, "storage") and thread_id in _checkpointer.storage:
+            del _checkpointer.storage[thread_id]
     except Exception:
         pass
 
@@ -81,7 +113,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     or "InvalidChatHistory" in type(e).__name__
                 )
                 if is_history_error:
-                    # 오염된 대화 이력 초기화 후 재시도
                     _clear_thread(student_id)
                     try:
                         await stream(config)

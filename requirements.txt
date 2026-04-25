@@ -1,9 +1,12 @@
 fastapi
 uvicorn[standard]
 langgraph>=0.2
+langgraph-checkpoint-postgres>=2.0.0
 langchain-anthropic
 langchain-core
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 python-dotenv
+psycopg[binary]>=3.0.0
+mem0ai
