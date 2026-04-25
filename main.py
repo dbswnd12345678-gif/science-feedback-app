@@ -82,29 +82,58 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await websocket.send_json({"type": "start"})
 
+            # 기록 Tool: 학생 응답 전송 후 백그라운드에서 실행되어도 무방한 Tool
+            BACKGROUND_TOOLS = {"write_to_sheet", "update_student_memory"}
+
             async def stream(cfg):
+                """
+                에이전트 스트림을 처리합니다.
+                write_to_sheet / update_student_memory가 시작되는 시점에
+                학생에게 done을 먼저 전송하고, 기록은 백그라운드에서 계속 실행합니다.
+                반환값: early_done_sent (bool)
+                """
+                has_response_text = False   # 학생 응답 텍스트가 한 번이라도 전송됐는지
+                early_done_sent = False     # done을 조기 전송했는지
+
                 async for event in agent.astream_events(
                     {"messages": [message]},
                     config=cfg,
                     version="v2",
                 ):
                     kind = event["event"]
+
                     if kind == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
                         content = chunk.content
                         if isinstance(content, list):
                             for block in content:
-                                if isinstance(block, dict) and block.get("type") == "text":
+                                if isinstance(block, dict) and block.get("type") == "text" and block["text"]:
+                                    has_response_text = True
                                     await websocket.send_json({"type": "chunk", "content": block["text"]})
                         elif isinstance(content, str) and content:
+                            has_response_text = True
                             await websocket.send_json({"type": "chunk", "content": content})
+
                     elif kind == "on_tool_start":
-                        await websocket.send_json({"type": "tool_start", "tool": event.get("name", "")})
+                        tool_name = event.get("name", "")
+                        if tool_name in BACKGROUND_TOOLS:
+                            # 학생 응답이 이미 전송된 경우 done을 먼저 보내고
+                            # 기록 Tool은 백그라운드에서 계속 실행
+                            if has_response_text and not early_done_sent:
+                                await websocket.send_json({"type": "done"})
+                                early_done_sent = True
+                            await websocket.send_json({"type": "tool_start", "tool": tool_name})
+                        else:
+                            await websocket.send_json({"type": "tool_start", "tool": tool_name})
+
                     elif kind == "on_tool_end":
-                        await websocket.send_json({"type": "tool_end", "tool": event.get("name", "")})
+                        tool_name = event.get("name", "")
+                        await websocket.send_json({"type": "tool_end", "tool": tool_name})
+
+                return early_done_sent
 
             try:
-                await stream(config)
+                early_done = await stream(config)
             except Exception as e:
                 error_msg = str(e)
                 is_history_error = (
@@ -115,13 +144,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 if is_history_error:
                     _clear_thread(student_id)
                     try:
-                        await stream(config)
+                        early_done = await stream(config)
                     except Exception as retry_err:
                         await websocket.send_json({"type": "error", "content": str(retry_err)})
+                        early_done = True  # 오류 시 done 중복 방지
                 else:
                     await websocket.send_json({"type": "error", "content": error_msg})
+                    early_done = True
 
-            await websocket.send_json({"type": "done"})
+            # 조기 전송하지 않은 경우에만 done 전송
+            if not early_done:
+                await websocket.send_json({"type": "done"})
 
     except WebSocketDisconnect:
         pass

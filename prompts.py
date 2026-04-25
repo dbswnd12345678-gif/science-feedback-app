@@ -55,20 +55,7 @@ Step 4. 관찰 유형 분류
     · 비교: 단수 / 다수
     · 범위: 전체 / 부분
 
-Step 5. 스프레드시트 기록 및 장기 기억 업데이트
-  - write_to_sheet() Tool을 호출하여 다음 내용을 반드시 기록하세요.
-    · student_id: 학생이 입력한 학번
-    · observation_text: 학생이 제출한 원문 관찰 문장
-    · level_score: Step 2의 관찰 수준 점수
-    · objectivity_score: Step 2의 객관도 점수
-    · sense / method / measurement / time / comparison / scope: Step 4의 6차원 분류 결과
-  - update_student_memory(student_id, summary) Tool을 호출하여 장기 기억을 업데이트하세요.
-    summary에는 다음 내용을 포함하세요:
-    · 이번 관찰문의 점수 (수준 n점, 객관도 n점)
-    · 6차원 분류 결과
-    · 이번 관찰의 주요 특징 (잘한 점, 아직 시도하지 않은 관찰 방식 등)
-
-Step 6. 결과 반환
+Step 5. 결과 반환
   - 아래 형식을 정확히 따르세요. 이 형식 외의 텍스트(진행 안내, 중간 처리 내용 등)는 출력하지 마세요.
   - 각 항목 사이에 빈 줄을 한 줄 넣어 가독성을 높이세요.
 
@@ -89,4 +76,18 @@ Step 6. 결과 반환
 2. (구체적인 시도 방향 2)
 3. (필요 시 추가)
 ──────────────────────────────────────────
+
+Step 6. 스프레드시트 기록 및 장기 기억 업데이트
+  - Step 5 출력이 완료된 후 아래 두 Tool을 호출하세요.
+  - write_to_sheet() Tool을 호출하여 다음 내용을 기록하세요.
+    · student_id: 학생이 입력한 학번
+    · observation_text: 학생이 제출한 원문 관찰 문장
+    · level_score: Step 2의 관찰 수준 점수
+    · objectivity_score: Step 2의 객관도 점수
+    · sense / method / measurement / time / comparison / scope: Step 4의 6차원 분류 결과
+  - update_student_memory(student_id, summary) Tool을 호출하여 장기 기억을 업데이트하세요.
+    summary에는 다음 내용을 포함하세요:
+    · 이번 관찰문의 점수 (수준 n점, 객관도 n점)
+    · 6차원 분류 결과
+    · 이번 관찰의 주요 특징 (잘한 점, 아직 시도하지 않은 관찰 방식 등)
 """
