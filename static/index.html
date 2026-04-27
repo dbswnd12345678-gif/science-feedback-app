@@ -14,54 +14,191 @@
     .tool-badge { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
     #chat-area { scroll-behavior: smooth; }
+    .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: 600; }
+    .tab-inactive { border-bottom: 2px solid transparent; color: #64748b; }
   </style>
 </head>
-<body class="bg-slate-50 min-h-screen flex flex-col items-center justify-start py-10 px-4">
+<body class="bg-slate-50 flex flex-col" style="height:100dvh; overflow:hidden;">
 
-  <!-- 헤더 -->
-  <div class="w-full max-w-2xl mb-6 text-center">
-    <h1 class="text-2xl font-bold text-slate-800">과학적 관찰 에이전트</h1>
-    <p class="text-sm text-slate-500 mt-1">관찰한 내용을 입력하면 채점과 피드백을 받을 수 있습니다.</p>
+  <!-- 헤더 + 탭 (고정) -->
+  <div class="bg-white border-b border-slate-200 px-4 pt-4 pb-0 flex-shrink-0">
+    <div class="max-w-2xl mx-auto">
+      <h1 class="text-xl font-bold text-slate-800">과학적 관찰 에이전트</h1>
+      <p class="text-xs text-slate-500 mt-0.5 mb-3">관찰한 내용을 입력하면 채점과 피드백을 받을 수 있습니다.</p>
+      <!-- 탭 -->
+      <div class="flex gap-6">
+        <button id="tab-chat" onclick="switchTab('chat')"
+          class="tab-active pb-2 text-sm transition-colors">채팅</button>
+        <button id="tab-report" onclick="switchTab('report')"
+          class="tab-inactive pb-2 text-sm transition-colors hidden">보고서</button>
+      </div>
+    </div>
   </div>
 
-  <!-- 입력 카드 -->
-  <div class="w-full max-w-2xl bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-    <div class="mb-4">
-      <label class="block text-sm font-medium text-slate-700 mb-1">학번을 입력해주세요</label>
-      <input
-        id="student-id"
-        type="text"
-        placeholder="예) 20250101"
-        class="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
-      />
+  <!-- 채팅 탭 콘텐츠 -->
+  <div id="view-chat" class="flex flex-col flex-1 min-h-0">
+    <!-- 채팅 메시지 영역 (스크롤) -->
+    <div id="chat-area" class="flex-1 overflow-y-auto px-4 py-4">
+      <div class="max-w-2xl mx-auto flex flex-col gap-4"></div>
     </div>
-    <div class="mb-5">
-      <label class="block text-sm font-medium text-slate-700 mb-1">관찰한 내용을 입력해주세요</label>
-      <textarea
-        id="observation"
-        rows="3"
-        placeholder="예) 단풍나무의 겨울눈의 길이가 1.5mm이다."
-        class="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition resize-none"
-      ></textarea>
+
+    <!-- 입력창 (하단 고정) -->
+    <div class="bg-white border-t border-slate-200 px-4 py-3 flex-shrink-0">
+      <div class="max-w-2xl mx-auto">
+        <div class="flex gap-2 mb-2">
+          <input
+            id="student-id"
+            type="text"
+            placeholder="학번 (예: 20250101)"
+            class="w-36 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
+          />
+          <textarea
+            id="observation"
+            rows="1"
+            placeholder="관찰한 내용을 입력해주세요 (예: 단풍나무의 겨울눈 길이가 1.5mm이다.)"
+            class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition resize-none"
+            style="min-height:38px; max-height:100px; overflow-y:auto;"
+          ></textarea>
+        </div>
+        <button
+          id="submit-btn"
+          onclick="submitObservation()"
+          class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >제출</button>
+      </div>
     </div>
-    <button
-      id="submit-btn"
-      onclick="submitObservation()"
-      class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-      제출
-    </button>
   </div>
 
-  <!-- 채팅 영역 -->
-  <div id="chat-area" class="w-full max-w-2xl flex flex-col gap-4"></div>
+  <!-- 보고서 탭 콘텐츠 -->
+  <div id="view-report" class="hidden flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto" id="report-content">
+      <div class="text-center text-slate-400 text-sm py-16">보고서를 불러오는 중...</div>
+    </div>
+  </div>
 
   <script>
     let ws = null;
     let currentBubble = null;
     let currentText = '';
     let isProcessing = false;
+    let currentStudentId = '';
+    let reportLoaded = false;
 
+    // ── 탭 전환 ──────────────────────────────────────────────────────────────
+    function switchTab(tab) {
+      const isChat = tab === 'chat';
+      document.getElementById('view-chat').classList.toggle('hidden', !isChat);
+      document.getElementById('view-report').classList.toggle('hidden', isChat);
+      document.getElementById('view-chat').classList.toggle('flex', isChat);
+      document.getElementById('tab-chat').className = isChat
+        ? 'tab-active pb-2 text-sm transition-colors'
+        : 'tab-inactive pb-2 text-sm transition-colors';
+      document.getElementById('tab-report').className = isChat
+        ? 'tab-inactive pb-2 text-sm transition-colors hidden'
+        : 'tab-active pb-2 text-sm transition-colors';
+      if (!isChat && !reportLoaded) loadReport();
+    }
+
+    // ── 보고서 로드 ───────────────────────────────────────────────────────────
+    async function loadReport() {
+      if (!currentStudentId) return;
+      reportLoaded = true;
+      const container = document.getElementById('report-content');
+      container.innerHTML = '<div class="text-center text-slate-400 text-sm py-16">보고서를 생성 중입니다... (30초 정도 소요될 수 있습니다)</div>';
+      try {
+        const res = await fetch(`/report/${encodeURIComponent(currentStudentId)}`);
+        const data = await res.json();
+        renderReport(data);
+      } catch (e) {
+        container.innerHTML = `<div class="text-red-500 text-sm">보고서 로드 실패: ${e.message}</div>`;
+        reportLoaded = false;
+      }
+    }
+
+    function renderReport(data) {
+      const container = document.getElementById('report-content');
+      if (data.error && !data.observations.length) {
+        container.innerHTML = `<div class="text-red-500 text-sm">${escHtml(data.error)}</div>`;
+        return;
+      }
+
+      // 점수 추이 표
+      let scoreRows = '';
+      data.observations.forEach(o => {
+        const lvl = o.level_score != null ? o.level_score : '-';
+        const obj = o.objectivity_score != null ? o.objectivity_score : '-';
+        const lvlCls = scoreColor(o.level_score);
+        const objCls = scoreColor(o.objectivity_score);
+        scoreRows += `<tr class="border-b border-slate-100">
+          <td class="py-2 px-3 text-center text-slate-600">${o.num}회</td>
+          <td class="py-2 px-3 text-sm text-slate-700 max-w-xs truncate">${escHtml(o.text)}</td>
+          <td class="py-2 px-3 text-center"><span class="inline-block ${lvlCls} text-xs font-bold rounded px-2 py-0.5">${lvl}점</span></td>
+          <td class="py-2 px-3 text-center"><span class="inline-block ${objCls} text-xs font-bold rounded px-2 py-0.5">${obj}점</span></td>
+        </tr>`;
+      });
+
+      // 자주 사용한 유형 (상위 5개)
+      const topTypes = [...data.matrix]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      const typeItems = topTypes.map(m =>
+        `<li class="text-sm text-slate-700">
+          <span class="inline-block bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded px-1.5 py-0.5 font-mono mr-1">&lt;${escHtml(m.sense)}, ${escHtml(m.method)}, ${escHtml(m.measurement)}&gt;</span>
+          <span class="inline-block bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded px-1.5 py-0.5 font-mono mr-1">&lt;${escHtml(m.scope)}, ${escHtml(m.comparison)}, ${escHtml(m.time)}&gt;</span>
+          × ${m.count}회
+        </li>`
+      ).join('');
+
+      // AI 내러티브
+      const narrativeHtml = data.narrative
+        ? `<div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">${escHtml(data.narrative)}</div>`
+        : '<div class="text-slate-400 text-sm">내러티브를 생성하지 못했습니다.</div>';
+
+      container.innerHTML = `
+        <div class="mb-6">
+          <div class="text-lg font-bold text-slate-800 mb-1">학번 ${escHtml(data.student_id)} 종합 보고서</div>
+          <div class="text-sm text-slate-500">총 ${data.total}회 관찰 완료</div>
+        </div>
+
+        <!-- 점수 추이 -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-100 font-medium text-slate-700 text-sm">회차별 점수</div>
+          <div class="overflow-x-auto">
+            <table class="w-full">
+              <thead class="bg-slate-50">
+                <tr>
+                  <th class="py-2 px-3 text-xs text-slate-500 font-medium">회차</th>
+                  <th class="py-2 px-3 text-xs text-slate-500 font-medium text-left">관찰문</th>
+                  <th class="py-2 px-3 text-xs text-slate-500 font-medium">수준</th>
+                  <th class="py-2 px-3 text-xs text-slate-500 font-medium">객관도</th>
+                </tr>
+              </thead>
+              <tbody>${scoreRows || '<tr><td colspan="4" class="text-center py-4 text-slate-400 text-sm">데이터 없음</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 관찰 유형 분포 -->
+        ${topTypes.length ? `
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 p-4">
+          <div class="font-medium text-slate-700 text-sm mb-3">자주 사용한 관찰 유형</div>
+          <ul class="flex flex-col gap-2">${typeItems}</ul>
+        </div>` : ''}
+
+        <!-- AI 내러티브 -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+          <div class="font-medium text-slate-700 text-sm mb-3">성장 분석</div>
+          ${narrativeHtml}
+        </div>
+      `;
+    }
+
+    function scoreColor(n) {
+      const m = { 0: 'bg-red-100 text-red-700', 1: 'bg-orange-100 text-orange-700', 2: 'bg-yellow-100 text-yellow-700', 3: 'bg-green-100 text-green-700' };
+      return m[n] ?? 'bg-slate-100 text-slate-700';
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────────────
     function getWebSocket() {
       if (ws && ws.readyState === WebSocket.OPEN) return ws;
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -80,6 +217,7 @@
       if (!studentId) { alert('학번을 입력해주세요.'); return; }
       if (!observation) { alert('관찰 내용을 입력해주세요.'); return; }
 
+      currentStudentId = studentId;
       const socket = getWebSocket();
       const payload = { student_id: studentId, observation };
 
@@ -99,6 +237,9 @@
         appendStudentBubble();
         currentBubble = appendAgentBubble();
         currentText = '';
+        const obsNum = data.obs_num || 1;
+        // 10회 완료 직후엔 보고서 탭 버튼 표시 (이번 제출이 10번째)
+        if (obsNum >= 10) showReportTab();
       }
       else if (data.type === 'chunk') {
         currentText += data.content;
@@ -126,24 +267,41 @@
       }
     }
 
+    function showReportTab() {
+      const btn = document.getElementById('tab-report');
+      btn.classList.remove('hidden');
+      // 채팅에 "보고서 보기" 안내 말풍선 추가
+      const area = document.getElementById('chat-area').querySelector('.max-w-2xl');
+      const div = document.createElement('div');
+      div.className = 'flex justify-center my-2';
+      div.innerHTML = `
+        <button onclick="switchTab('report')"
+          class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded-full shadow transition">
+          📋 10회 관찰 완료! 보고서 보기
+        </button>`;
+      area.appendChild(div);
+      scrollToBottom();
+      reportLoaded = false; // 최신 데이터로 다시 로드
+    }
+
+    // ── 채팅 렌더링 ───────────────────────────────────────────────────────────
     function appendStudentBubble() {
       const studentId = document.getElementById('student-id').value.trim();
       const obs = document.getElementById('observation').value.trim();
-      const area = document.getElementById('chat-area');
+      const area = document.getElementById('chat-area').querySelector('.max-w-2xl');
       const div = document.createElement('div');
       div.className = 'flex flex-col items-end';
       div.innerHTML = `
         <span class="text-xs text-slate-400 mb-1">학번 ${escHtml(studentId)}</span>
         <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-prose text-sm leading-relaxed">
           ${escHtml(obs)}
-        </div>
-      `;
+        </div>`;
       area.appendChild(div);
       scrollToBottom();
     }
 
     function appendAgentBubble() {
-      const area = document.getElementById('chat-area');
+      const area = document.getElementById('chat-area').querySelector('.max-w-2xl');
       const wrapper = document.createElement('div');
       wrapper.className = 'flex flex-col items-start';
 
@@ -206,10 +364,8 @@
     }
 
     function formatResponse(text) {
-      // 분류 태그 <시각, 단순, 정성> 를 임시 플레이스홀더로 보호 (marked가 HTML 태그로 오인 방지)
       const tagPlaceholders = [];
       let protected_text = text.replace(/<([^>]+)>/g, (match, inner) => {
-        // 한글이 포함된 태그만 보호 (HTML 태그와 구분)
         if (/[가-힣]/.test(inner)) {
           const idx = tagPlaceholders.length;
           tagPlaceholders.push(inner);
@@ -218,16 +374,13 @@
         return match;
       });
 
-      // marked.js로 마크다운 렌더링
       let html = marked.parse(protected_text);
 
-      // 플레이스홀더를 분류 태그 스타일로 복원
       html = html.replace(/%%TAG(\d+)%%/g, (_, idx) => {
         const inner = tagPlaceholders[parseInt(idx)];
         return `<span class="inline-block bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded px-1.5 py-0.5 mx-0.5 font-mono">&lt;${inner}&gt;</span>`;
       });
 
-      // 점수 강조 (예: 2점, 1점) — 이미 렌더링된 HTML에 적용
       html = html.replace(/(\d+)점/g, (_, n) => {
         const colors = { '0': 'bg-red-100 text-red-700', '1': 'bg-orange-100 text-orange-700', '2': 'bg-yellow-100 text-yellow-700', '3': 'bg-green-100 text-green-700' };
         const cls = colors[n] || 'bg-slate-100 text-slate-700';
@@ -238,7 +391,7 @@
     }
 
     function appendError(msg) {
-      const area = document.getElementById('chat-area');
+      const area = document.getElementById('chat-area').querySelector('.max-w-2xl');
       const div = document.createElement('div');
       div.className = 'bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3';
       div.textContent = msg;
@@ -253,16 +406,22 @@
     }
 
     function scrollToBottom() {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      const chatArea = document.getElementById('chat-area');
+      chatArea.scrollTop = chatArea.scrollHeight;
     }
 
     function escHtml(str) {
-      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // Enter 키로 제출 (Shift+Enter는 줄바꿈)
+    // textarea 자동 높이 조절
     document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('observation').addEventListener('keydown', e => {
+      const obs = document.getElementById('observation');
+      obs.addEventListener('input', () => {
+        obs.style.height = 'auto';
+        obs.style.height = Math.min(obs.scrollHeight, 100) + 'px';
+      });
+      obs.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitObservation(); }
       });
     });

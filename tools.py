@@ -270,7 +270,11 @@ def write_to_sheet(
         response_text = f"{observation_text} {tag}"
         updates = [{"range": _safe_range(sheet_title, matrix_cell), "values": [[current_count + 1]]}]
         if next_slot:
+            slot_row = next_slot[1:]  # "O3" → "3"
             updates.append({"range": _safe_range(sheet_title, next_slot), "values": [[response_text]]})
+            # 수준 점수(P열), 객관도 점수(Q열) 함께 저장
+            updates.append({"range": _safe_range(sheet_title, f"P{slot_row}"), "values": [[level_score]]})
+            updates.append({"range": _safe_range(sheet_title, f"Q{slot_row}"), "values": [[objectivity_score]]})
 
         service.spreadsheets().values().batchUpdate(
             spreadsheetId=spreadsheet_id,

@@ -8,9 +8,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 
 from graph import build_agent
+from report import generate_report
 
 # 전역 에이전트 (lifespan에서 초기화)
 agent = None
@@ -50,6 +52,13 @@ async def root():
     return FileResponse("static/index.html")
 
 
+@app.get("/report/{student_id}")
+async def report_endpoint(student_id: str):
+    """학생의 10회 관찰 종합 보고서 데이터를 JSON으로 반환합니다."""
+    data = await generate_report(student_id)
+    return JSONResponse(content=data)
+
+
 def _clear_thread(thread_id: str):
     """MemorySaver 환경에서 오염된 thread 상태를 삭제합니다."""
     try:
@@ -76,11 +85,24 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             config = {"configurable": {"thread_id": student_id}}
+
+            # 이 학생의 지금까지 제출한 관찰 횟수를 계산
+            obs_num = 1
+            try:
+                state = _checkpointer.get(config)
+                if state:
+                    past = state["channel_values"].get("messages", [])
+                    obs_num = sum(
+                        1 for m in past if m.__class__.__name__ == "HumanMessage"
+                    ) + 1
+            except Exception:
+                obs_num = 1
+
             message = HumanMessage(
-                content=f"[학번: {student_id}]\n[관찰문]: {observation}"
+                content=f"[학번: {student_id}]\n[관찰 번호: {obs_num}번째]\n[관찰문]: {observation}"
             )
 
-            await websocket.send_json({"type": "start"})
+            await websocket.send_json({"type": "start", "obs_num": obs_num})
 
             # 기록 Tool: 학생 응답 전송 후 백그라운드에서 실행되어도 무방한 Tool
             BACKGROUND_TOOLS = {"write_to_sheet", "update_student_memory"}
