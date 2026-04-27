@@ -18,6 +18,9 @@ from report import generate_report
 agent = None
 _checkpointer = None
 
+# 학생별 관찰 횟수 카운터 (서버 메모리 내 보관, 재시작 시 초기화)
+_obs_counters: dict[str, int] = {}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,17 +89,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
             config = {"configurable": {"thread_id": student_id}}
 
-            # 이 학생의 지금까지 제출한 관찰 횟수를 계산
-            obs_num = 1
-            try:
-                state = _checkpointer.get(config)
-                if state:
-                    past = state["channel_values"].get("messages", [])
-                    obs_num = sum(
-                        1 for m in past if m.__class__.__name__ == "HumanMessage"
-                    ) + 1
-            except Exception:
-                obs_num = 1
+            # 학생별 관찰 횟수 증가 (서버 재시작 전까지 누적)
+            _obs_counters[student_id] = _obs_counters.get(student_id, 0) + 1
+            obs_num = _obs_counters[student_id]
 
             message = HumanMessage(
                 content=f"[학번: {student_id}]\n[관찰 번호: {obs_num}번째]\n[관찰문]: {observation}"
