@@ -87,14 +87,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
                 continue
 
-            config = {"configurable": {"thread_id": student_id}}
+            # 학번을 config로 분리 — HumanMessage에 학번을 포함하면 LLM이 인사말에서 학번을 사용함
+            config = {"configurable": {"thread_id": student_id, "student_id": student_id}}
 
             # 학생별 관찰 횟수 증가 (서버 재시작 전까지 누적)
             _obs_counters[student_id] = _obs_counters.get(student_id, 0) + 1
             obs_num = _obs_counters[student_id]
 
             message = HumanMessage(
-                content=f"[학번: {student_id}]\n[관찰 번호: {obs_num}번째]\n[관찰문]: {observation}"
+                content=f"[관찰 번호: {obs_num}번째]\n[관찰문]: {observation}"
             )
 
             await websocket.send_json({"type": "start", "obs_num": obs_num})
