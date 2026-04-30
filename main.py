@@ -3,6 +3,10 @@ from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
 import os
+# #region debug log
+_key = os.environ.get("ANTHROPIC_API_KEY","")
+print(f"[DEBUG-30f8a4] ANTHROPIC_API_KEY length={len(_key)} prefix={_key[:14]!r} suffix={_key[-4:]!r}", flush=True)
+# #endregion
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
