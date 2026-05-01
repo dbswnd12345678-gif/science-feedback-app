@@ -9,9 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
-from langchain_core.messages import HumanMessage
-
-from graph import build_agent
+from graph import build_agent, EvalState
 from report import generate_report
 
 # 전역 에이전트 (lifespan에서 초기화)
@@ -94,27 +92,39 @@ async def websocket_endpoint(websocket: WebSocket):
             _obs_counters[student_id] = _obs_counters.get(student_id, 0) + 1
             obs_num = _obs_counters[student_id]
 
-            message = HumanMessage(
-                content=f"[관찰 번호: {obs_num}번째]\n[관찰문]: {observation}"
-            )
+            # 3-노드 StateGraph에 전달할 초기 상태
+            initial_state: EvalState = {
+                "messages": [],          # add_messages reducer가 누적, 초기에는 빈 리스트
+                "student_id": student_id,
+                "obs_num": obs_num,
+                "observation_text": observation,
+                "planning_goal": "",
+                "level_score": 0,
+                "objectivity_score": 0,
+                "sense": "",
+                "method": "",
+                "measurement": "",
+                "time_dim": "",
+                "comparison": "",
+                "scope": "",
+                "early_exit": False,
+            }
 
             await websocket.send_json({"type": "start", "obs_num": obs_num})
 
-            # 기록 Tool: 학생 응답 전송 후 백그라운드에서 실행되어도 무방한 Tool
-            BACKGROUND_TOOLS = {"write_to_sheet", "update_student_memory"}
-
             async def stream(cfg):
                 """
-                에이전트 스트림을 처리합니다.
-                write_to_sheet / update_student_memory가 시작되는 시점에
-                학생에게 done을 먼저 전송하고, 기록은 백그라운드에서 계속 실행합니다.
+                3-노드 StateGraph 스트림을 처리합니다.
+                - Node 1 (node_evaluate): Tool 호출 배지 표시, 평가 텍스트 스트리밍
+                - Node 2 (node_feedback): 피드백 텍스트 스트리밍
+                - Node 3 (node_record) 시작 시점에 done을 먼저 전송, 기록은 백그라운드 계속 실행
                 반환값: early_done_sent (bool)
                 """
-                has_response_text = False   # 학생 응답 텍스트가 한 번이라도 전송됐는지
-                early_done_sent = False     # done을 조기 전송했는지
+                has_response_text = False
+                early_done_sent = False
 
                 async for event in agent.astream_events(
-                    {"messages": [message]},
+                    initial_state,
                     config=cfg,
                     version="v2",
                 ):
@@ -132,21 +142,18 @@ async def websocket_endpoint(websocket: WebSocket):
                             has_response_text = True
                             await websocket.send_json({"type": "chunk", "content": content})
 
-                    elif kind == "on_tool_start":
-                        tool_name = event.get("name", "")
-                        if tool_name in BACKGROUND_TOOLS:
-                            # 학생 응답이 이미 전송된 경우 done을 먼저 보내고
-                            # 기록 Tool은 백그라운드에서 계속 실행
-                            if has_response_text and not early_done_sent:
-                                await websocket.send_json({"type": "done"})
-                                early_done_sent = True
-                            await websocket.send_json({"type": "tool_start", "tool": tool_name})
-                        else:
-                            await websocket.send_json({"type": "tool_start", "tool": tool_name})
+                    elif kind == "on_chain_start" and event.get("name") == "node_record":
+                        # node_record 시작 = 피드백 생성 완료 → done 조기 전송
+                        if has_response_text and not early_done_sent:
+                            await websocket.send_json({"type": "done"})
+                            early_done_sent = True
 
-                    elif kind == "on_tool_end":
-                        tool_name = event.get("name", "")
-                        await websocket.send_json({"type": "tool_end", "tool": tool_name})
+                    elif kind == "on_tool_start" and not early_done_sent:
+                        # done 전송 전에만 Tool 배지 표시 (Node 1의 평가 Tool만 해당)
+                        await websocket.send_json({"type": "tool_start", "tool": event.get("name", "")})
+
+                    elif kind == "on_tool_end" and not early_done_sent:
+                        await websocket.send_json({"type": "tool_end", "tool": event.get("name", "")})
 
                 return early_done_sent
 
