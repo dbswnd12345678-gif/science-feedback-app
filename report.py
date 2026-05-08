@@ -2,8 +2,9 @@
 학생 10회 관찰 종합 보고서 생성 모듈.
 
 데이터 소스:
-  - Google Sheets: 관찰문(O열), 수준 점수(P열), 객관도 점수(Q열),
-                   타임스탬프(R열), 누적 관찰력 지수(S열), 분류 행렬(D6:K25)
+  - Google Sheets: 관찰 시각(O열), 관찰 문장(P열), 관찰 유형(Q열),
+                   수준 점수(R열), 객관도 점수(S열), 관찰력 지수(T열),
+                   분류 행렬(D6:K25)
   - Mem0: 장기 기억 패턴 요약
   - Claude: 성장 내러티브 생성 (단일 LLM 호출)
 """
@@ -93,25 +94,26 @@ async def generate_report(student_id: str) -> dict:
     try:
         service = _sheets_service()
 
-        # O2:S11 — 관찰문(O), 수준 점수(P), 객관도 점수(Q), 타임스탬프(R), 관찰력 지수(S)
+        # O2:T11 — 관찰 시각(O), 관찰 문장(P), 관찰 유형(Q),
+        #           수준 점수(R), 객관도 점수(S), 관찰력 지수(T)
         obs_result = (
             service.spreadsheets()
             .values()
             .get(
                 spreadsheetId=spreadsheet_id,
-                range=_safe_range(student_id, "O2:S11"),
+                range=_safe_range(student_id, "O2:T11"),
             )
             .execute()
         )
         rows = obs_result.get("values", [])
         for i, row in enumerate(rows):
-            text = row[0].strip() if len(row) > 0 and row[0] else ""
+            text = row[1].strip() if len(row) > 1 and row[1] else ""  # P열: 관찰 문장
             if not text:
                 continue
-            level = int(row[1]) if len(row) > 1 and row[1] != "" else None
-            obj = int(row[2]) if len(row) > 2 and row[2] != "" else None
-            timestamp = row[3] if len(row) > 3 else None
-            oq_index = float(row[4]) if len(row) > 4 and row[4] != "" else None
+            timestamp = row[0] if len(row) > 0 else None                           # O열
+            level     = int(row[3])   if len(row) > 3 and row[3] != "" else None   # R열
+            obj       = int(row[4])   if len(row) > 4 and row[4] != "" else None   # S열
+            oq_index  = float(row[5]) if len(row) > 5 and row[5] != "" else None   # T열
             observations.append(
                 {
                     "num": i + 1,
