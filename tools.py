@@ -1,6 +1,9 @@
 import os
 import re
+from datetime import datetime, timezone, timedelta
 from langchain_core.tools import tool
+
+_KST = timezone(timedelta(hours=9))
 
 
 # ── Mem0 클라이언트 (장기 기억) ───────────────────────────────────────────────
@@ -213,9 +216,11 @@ def write_to_sheet(
     scope: str,
 ) -> str:
     """
-    학생별 시트 탭에 두 가지를 기록합니다.
-    1. 6차원 분류에 해당하는 분류 행렬 셀의 카운트를 +1 합니다.
-    2. O2~O11 중 다음 빈 슬롯에 관찰 텍스트와 분류 태그를 기록합니다.
+    학생별 시트 탭에 다음을 기록합니다.
+    1. 6차원 분류 행렬 셀 카운트 +1
+    2. O열: 관찰문+태그, P열: 수준 점수, Q열: 객관도 점수
+    3. R열: 관찰 수행 시각(KST), S열: 누적 관찰력 지수(OQ_n)
+    4. 10번째 관찰 완료 시 R13/S13에 최종 관찰력 지수 기록
     학생 탭이 없으면 시트1을 복제하여 자동 생성합니다.
     예외가 발생해도 항상 문자열을 반환합니다(LangGraph ToolMessage 보장).
     """
@@ -237,51 +242,94 @@ def write_to_sheet(
             )
         matrix_cell = f"{col}{row}"
 
-        # 3. 현재 행렬 셀 값 읽기
-        read_result = (
+        # 3. 전체 분류 행렬(D6:K25) 읽기
+        #    - current_count: 현재 관찰의 행렬 셀 기존 값
+        #    - non_zero: D_n 계산용 (non-zero 셀 수)
+        _row_keys = list(ROW_MAP.keys())
+        _col_keys = list(COL_MAP.keys())
+        row_idx = _row_keys.index((sense, method, measurement))
+        col_idx = _col_keys.index((time, comparison, scope))
+
+        matrix_result = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, matrix_cell))
+            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, "D6:K25"))
             .execute()
         )
-        raw = read_result.get("values", [[""]])[0][0] if read_result.get("values") else ""
+        matrix_values = matrix_result.get("values", [])
+
+        # 현재 셀 값 추출
+        row_data = matrix_values[row_idx] if row_idx < len(matrix_values) else []
+        raw = row_data[col_idx] if col_idx < len(row_data) else ""
         try:
             current_count = int(raw)
         except (ValueError, TypeError):
             current_count = 0
 
-        # 4. 응답 문장 슬롯(O2~O11) 중 다음 빈 슬롯 탐색
-        n_result = (
+        # D_n 계산: 기존 non-zero 셀 수 + 이번 관찰로 새 유형 추가 여부
+        non_zero = 0
+        for r in matrix_values:
+            for v in r:
+                try:
+                    if int(v) > 0:
+                        non_zero += 1
+                except (ValueError, TypeError):
+                    pass
+        if current_count == 0:
+            non_zero += 1   # 이번 관찰이 새 유형을 추가함
+
+        # 4. O2:S11 읽기: next_slot 탐색 + 이전 관찰의 누적합 계산
+        slot_result = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, "O2:O11"))
+            .get(spreadsheetId=spreadsheet_id, range=_safe_range(sheet_title, "O2:S11"))
             .execute()
         )
-        n_values = n_result.get("values", [])
+        slot_values = slot_result.get("values", [])
         next_slot: str | None = None
+        cumulative_sum = 0
         for i in range(10):
-            cell_val = n_values[i][0].strip() if i < len(n_values) and n_values[i] else ""
-            if not cell_val:
+            row_s = slot_values[i] if i < len(slot_values) else []
+            obs_text = row_s[0].strip() if row_s else ""
+            if not obs_text:
                 next_slot = f"O{i + 2}"
                 break
+            lv = int(row_s[1]) if len(row_s) > 1 and row_s[1] != "" else 0
+            ob = int(row_s[2]) if len(row_s) > 2 and row_s[2] != "" else 0
+            cumulative_sum += lv * ob
+
+        # 현재 관찰의 기여 추가
+        cumulative_sum += level_score * objectivity_score
+        oq_n = round(cumulative_sum * non_zero, 2)
 
         # 5. 배치 업데이트
         tag = f"<{sense}, {method}, {measurement}> <{scope}, {comparison}, {time}>"
         response_text = f"{observation_text} {tag}"
+        timestamp = datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+
         updates = [{"range": _safe_range(sheet_title, matrix_cell), "values": [[current_count + 1]]}]
         if next_slot:
             slot_row = next_slot[1:]  # "O3" → "3"
-            updates.append({"range": _safe_range(sheet_title, next_slot), "values": [[response_text]]})
-            # 수준 점수(P열), 객관도 점수(Q열) 함께 저장
-            updates.append({"range": _safe_range(sheet_title, f"P{slot_row}"), "values": [[level_score]]})
-            updates.append({"range": _safe_range(sheet_title, f"Q{slot_row}"), "values": [[objectivity_score]]})
+            updates.extend([
+                {"range": _safe_range(sheet_title, next_slot),         "values": [[response_text]]},
+                {"range": _safe_range(sheet_title, f"P{slot_row}"),    "values": [[level_score]]},
+                {"range": _safe_range(sheet_title, f"Q{slot_row}"),    "values": [[objectivity_score]]},
+                {"range": _safe_range(sheet_title, f"R{slot_row}"),    "values": [[timestamp]]},
+                {"range": _safe_range(sheet_title, f"S{slot_row}"),    "values": [[oq_n]]},
+            ])
+            # 10번째 관찰(O11 슬롯) 완료 시 최종 관찰력 지수 별도 기록
+            if slot_row == "11":
+                updates.extend([
+                    {"range": _safe_range(sheet_title, "R13"), "values": [["최종 관찰력 지수"]]},
+                    {"range": _safe_range(sheet_title, "S13"), "values": [[oq_n]]},
+                ])
 
         service.spreadsheets().values().batchUpdate(
             spreadsheetId=spreadsheet_id,
             body={"valueInputOption": "RAW", "data": updates},
         ).execute()
 
-        slot_msg = f"{next_slot}에 응답 문장 저장" if next_slot else "응답 문장 슬롯이 가득 찼습니다(10개 초과)"
+        slot_msg = f"{next_slot}에 응답 문장 저장 (OQ={oq_n})" if next_slot else "응답 문장 슬롯이 가득 찼습니다(10개 초과)"
         return f"기록 완료 — 학생: {student_id}, 행렬 셀: {matrix_cell} → {current_count + 1}, {slot_msg}"
 
     except Exception as e:

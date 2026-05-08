@@ -2,7 +2,8 @@
 학생 10회 관찰 종합 보고서 생성 모듈.
 
 데이터 소스:
-  - Google Sheets: 관찰문(O열), 수준 점수(P열), 객관도 점수(Q열), 분류 행렬(D6:K25)
+  - Google Sheets: 관찰문(O열), 수준 점수(P열), 객관도 점수(Q열),
+                   타임스탬프(R열), 누적 관찰력 지수(S열), 분류 행렬(D6:K25)
   - Mem0: 장기 기억 패턴 요약
   - Claude: 성장 내러티브 생성 (단일 LLM 호출)
 """
@@ -92,13 +93,13 @@ async def generate_report(student_id: str) -> dict:
     try:
         service = _sheets_service()
 
-        # O2:Q11 — 관찰문(O), 수준 점수(P), 객관도 점수(Q)
+        # O2:S11 — 관찰문(O), 수준 점수(P), 객관도 점수(Q), 타임스탬프(R), 관찰력 지수(S)
         obs_result = (
             service.spreadsheets()
             .values()
             .get(
                 spreadsheetId=spreadsheet_id,
-                range=_safe_range(student_id, "O2:Q11"),
+                range=_safe_range(student_id, "O2:S11"),
             )
             .execute()
         )
@@ -109,8 +110,17 @@ async def generate_report(student_id: str) -> dict:
                 continue
             level = int(row[1]) if len(row) > 1 and row[1] != "" else None
             obj = int(row[2]) if len(row) > 2 and row[2] != "" else None
+            timestamp = row[3] if len(row) > 3 else None
+            oq_index = float(row[4]) if len(row) > 4 and row[4] != "" else None
             observations.append(
-                {"num": i + 1, "text": text, "level_score": level, "objectivity_score": obj}
+                {
+                    "num": i + 1,
+                    "text": text,
+                    "level_score": level,
+                    "objectivity_score": obj,
+                    "timestamp": timestamp,
+                    "oq_index": oq_index,
+                }
             )
 
         # D6:K25 — 분류 행렬 (20행 × 8열)
