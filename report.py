@@ -3,7 +3,8 @@
 
 데이터 소스:
   - Google Sheets: 관찰 시각(O열), 관찰 문장(P열), 관찰 유형(Q열),
-                   수준 점수(R열), 객관도 점수(S열), 관찰력 지수(T열),
+                   수준 점수(R열), ΣDO_n(S열),
+                   최종 OQ_A(T13), 관찰 다양도 D(U13),
                    분류 행렬(D6:K25)
   - Mem0: 장기 기억 패턴 요약
   - Claude: 성장 내러티브 생성 (단일 LLM 호출)
@@ -88,20 +89,22 @@ async def generate_report(student_id: str) -> dict:
 
     observations: list[dict] = []
     matrix_nonzero: list[dict] = []
+    final_oq_a: float | None = None
+    diversity_d: int | None = None
     error_msg: str | None = None
 
     # ── Google Sheets 데이터 조회 ─────────────────────────────────────────────
     try:
         service = _sheets_service()
 
-        # O2:T11 — 관찰 시각(O), 관찰 문장(P), 관찰 유형(Q),
-        #           수준 점수(R), 객관도 점수(S), 관찰력 지수(T)
+        # O2:S11 — 관찰 시각(O), 관찰 문장(P), 관찰 유형(Q),
+        #           수준 점수(R), ΣDO_n(S)
         obs_result = (
             service.spreadsheets()
             .values()
             .get(
                 spreadsheetId=spreadsheet_id,
-                range=_safe_range(student_id, "O2:T11"),
+                range=_safe_range(student_id, "O2:S11"),
             )
             .execute()
         )
@@ -110,20 +113,32 @@ async def generate_report(student_id: str) -> dict:
             text = row[1].strip() if len(row) > 1 and row[1] else ""  # P열: 관찰 문장
             if not text:
                 continue
-            timestamp = row[0] if len(row) > 0 else None                           # O열
-            level     = int(row[3])   if len(row) > 3 and row[3] != "" else None   # R열
-            obj       = int(row[4])   if len(row) > 4 and row[4] != "" else None   # S열
-            oq_index  = float(row[5]) if len(row) > 5 and row[5] != "" else None   # T열
+            timestamp = row[0] if len(row) > 0 else None                         # O열
+            level     = int(row[3]) if len(row) > 3 and row[3] != "" else None   # R열
+            sum_do    = int(row[4]) if len(row) > 4 and row[4] != "" else None   # S열: ΣDO_n
             observations.append(
                 {
                     "num": i + 1,
                     "text": text,
                     "level_score": level,
-                    "objectivity_score": obj,
+                    "sum_do": sum_do,
                     "timestamp": timestamp,
-                    "oq_index": oq_index,
                 }
             )
+
+        # T13: 최종 OQ_A, U13: 관찰 다양도 D
+        final_result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=_safe_range(student_id, "T13:U13"),
+            )
+            .execute()
+        )
+        final_row = final_result.get("values", [[]])[0] if final_result.get("values") else []
+        final_oq_a  = float(final_row[0]) if len(final_row) > 0 and final_row[0] != "" else None
+        diversity_d = int(final_row[1])   if len(final_row) > 1 and final_row[1] != "" else None
 
         # D6:K25 — 분류 행렬 (20행 × 8열)
         matrix_result = (
@@ -166,7 +181,7 @@ async def generate_report(student_id: str) -> dict:
     narrative = ""
     if observations:
         obs_lines = "\n".join(
-            f"{o['num']}회: 수준 {o['level_score']}점, 객관도 {o['objectivity_score']}점 — {o['text']}"
+            f"{o['num']}회: 수준 {o['level_score']}점, ΣDO {o['sum_do']}점 — {o['text']}"
             for o in observations
         )
         matrix_lines = "\n".join(
@@ -202,6 +217,8 @@ async def generate_report(student_id: str) -> dict:
         "total": len(observations),
         "observations": observations,
         "matrix": matrix_nonzero,
+        "final_oq_a": final_oq_a,
+        "diversity_d": diversity_d,
         "narrative": narrative,
         "error": error_msg,
     }

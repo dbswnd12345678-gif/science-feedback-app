@@ -31,16 +31,16 @@ class EvalState(TypedDict):
     student_id: str
     obs_num: int
     observation_text: str
-    planning_goal: str       # Node 1에서 추출 → Node 2·3에서 사용
+    planning_goal: str          # Node 1에서 추출 → Node 2·3에서 사용
     level_score: int
-    objectivity_score: int
+    objectivity_scores: list    # 독립 정보별 객관도 점수 리스트 (예: [2, 2])
     sense: str
     method: str
     measurement: str
-    time_dim: str            # 'time' 은 Python 예약어 충돌 방지를 위해 time_dim 사용
+    time_dim: str               # 'time' 은 Python 예약어 충돌 방지를 위해 time_dim 사용
     comparison: str
     scope: str
-    early_exit: bool         # 객관도 0점이면 True → Node 2·3 건너뜀
+    early_exit: bool            # 객관도 합계 0이면 True → Node 2·3 건너뜀
 
 
 # ── Extraction schema ─────────────────────────────────────────────────────────
@@ -48,7 +48,14 @@ class EvalState(TypedDict):
 class EvalExtraction(BaseModel):
     """Node 1 평가 결과에서 구조화 데이터를 추출하기 위한 스키마."""
     level_score: int = Field(default=0, description="관찰의 수준 점수")
-    objectivity_score: int = Field(default=0, description="관찰 지식의 객관도 점수 (0~3)")
+    objectivity_scores: list[int] = Field(
+        default=[0],
+        description=(
+            "독립 정보별 객관도 점수 리스트. "
+            "LE_n=1이면 1개, LE_n=2이면 2개, LE_n=3이면 3개 점수. "
+            "과학적 관찰이 아니면 [0]."
+        ),
+    )
     sense: str = Field(default="시각", description="감각 분류: 시각/청각/후각/미각/촉각")
     method: str = Field(default="단순", description="방법 분류: 단순/조작")
     measurement: str = Field(default="정성", description="측정 분류: 정성/정량")
@@ -56,7 +63,7 @@ class EvalExtraction(BaseModel):
     comparison: str = Field(default="단수", description="비교 분류: 단수/다수")
     scope: str = Field(default="전체", description="범위 분류: 전체/부분")
     planning_goal: str = Field(default="", description="학생이 다음에 시도할 새로운 관찰 방법 (한 문장)")
-    early_exit: bool = Field(default=False, description="객관도 0점이면 True, 아니면 False")
+    early_exit: bool = Field(default=False, description="객관도 합계가 0이면 True, 아니면 False")
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -124,7 +131,7 @@ async def node_evaluate(state: EvalState, config: RunnableConfig) -> dict:
         ],
         "planning_goal": extraction.planning_goal,
         "level_score": extraction.level_score,
-        "objectivity_score": extraction.objectivity_score,
+        "objectivity_scores": extraction.objectivity_scores,
         "sense": extraction.sense,
         "method": extraction.method,
         "measurement": extraction.measurement,
@@ -147,10 +154,11 @@ async def node_feedback(state: EvalState, config: RunnableConfig) -> dict:
     Node 1의 구조화 데이터를 바탕으로 피드백 섹션만 생성.
     짧고 집중된 프롬프트로 번호·이모지 형식 준수율을 높인다.
     """
+    scores = state['objectivity_scores']
     context = (
         f"관찰문: {state['observation_text']}\n"
         f"관찰의 수준: {state['level_score']}점\n"
-        f"관찰 지식의 객관도: {state['objectivity_score']}점\n"
+        f"관찰 지식의 객관도: {scores} (합계: {sum(scores)}점)\n"
         f"관찰 유형: <{state['sense']}, {state['method']}, {state['measurement']}> "
         f"<{state['scope']}, {state['comparison']}, {state['time_dim']}>\n"
         f"Planning 목표 (다음에 시도할 관찰 방법): {state['planning_goal']}"
@@ -170,9 +178,10 @@ async def node_record(state: EvalState, config: RunnableConfig) -> dict:
     LLM 호출 없이 Python에서 직접 Tool 함수를 실행한다.
     """
     student_id = state["student_id"]
+    scores = state['objectivity_scores']
     summary = (
         f"관찰문: {state['observation_text']}, "
-        f"수준 {state['level_score']}점, 객관도 {state['objectivity_score']}점, "
+        f"수준 {state['level_score']}점, 객관도 {scores} (합계: {sum(scores)}점), "
         f"유형: <{state['sense']}, {state['method']}, {state['measurement']}> "
         f"<{state['scope']}, {state['comparison']}, {state['time_dim']}>, "
         f"Planning 목표: {state['planning_goal']}"
@@ -182,7 +191,7 @@ async def node_record(state: EvalState, config: RunnableConfig) -> dict:
             "student_id": student_id,
             "observation_text": state["observation_text"],
             "level_score": state["level_score"],
-            "objectivity_score": state["objectivity_score"],
+            "objectivity_scores": state["objectivity_scores"],
             "sense": state["sense"],
             "method": state["method"],
             "measurement": state["measurement"],

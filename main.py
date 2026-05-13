@@ -100,7 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "observation_text": observation,
                 "planning_goal": "",
                 "level_score": 0,
-                "objectivity_score": 0,
+                "objectivity_scores": [0],
                 "sense": "",
                 "method": "",
                 "measurement": "",

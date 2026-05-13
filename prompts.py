@@ -52,11 +52,15 @@ NODE1_PROMPT = """
     <halt>Step 3을 실행하지 마세요. 여기서 종료합니다.</halt>
   </branch>
 
-  <action>get_feedback_criteria(objectivity_score) Tool을 호출하세요.</action>
+  <action>get_feedback_criteria(objectivity_score) Tool을 호출하세요. objectivity_score는 모든 독립 정보의 객관도 중 가장 낮은 값을 사용하세요.</action>
   <output>
-    관찰의 수준: **N점** — (한 문장 이유)
+    관찰의 수준: **N점** — (한 문장 이유, 몇 가지 독립 정보가 포함되었는지 언급)
 
-    관찰 지식의 객관도: **N점** — (한 문장 이유)
+    관찰 지식의 객관도:
+      정보 ①: **N점** — "(정보 내용 한 문장 요약)" → (판단 이유)
+      정보 ②: **N점** — "(정보 내용 한 문장 요약)" → (판단 이유)
+      합계: N + N = ΣN점
+    (수준이 1점이면 정보 ①만 출력, 수준이 N점이면 정보 ① ~ 정보 N까지 출력)
   </output>
 </step>
 
