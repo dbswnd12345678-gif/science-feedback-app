@@ -31,7 +31,7 @@ class EvalState(TypedDict):
     student_id: str
     obs_num: int
     observation_text: str
-    planning_goal: str          # Node 1에서 추출 → Node 2·3에서 사용
+    feedback_strategy: str      # Node 1에서 추출 → Node 2 피드백 근거 (다차원 전략 텍스트)
     level_score: int
     objectivity_scores: list    # 독립 정보별 객관도 점수 리스트 (예: [2, 2])
     sense: str
@@ -62,7 +62,14 @@ class EvalExtraction(BaseModel):
     time_dim: str = Field(default="시간독립", description="시간 분류: 시간독립/시간종속")
     comparison: str = Field(default="단수", description="비교 분류: 단수/다수")
     scope: str = Field(default="전체", description="범위 분류: 전체/부분")
-    planning_goal: str = Field(default="", description="학생이 다음에 시도할 새로운 관찰 방법 (한 문장)")
+    feedback_strategy: str = Field(
+        default="",
+        description=(
+            "다차원 피드백 전략 텍스트. "
+            "전략1(관찰 다양도 확대)·전략2(깊이 발전)·전략3(반복 패턴 탈출) 3가지를 포함. "
+            "이번 관찰 대상에서 실제로 가능한 유형만 포함."
+        ),
+    )
     early_exit: bool = Field(default=False, description="객관도 합계가 0이면 True, 아니면 False")
 
 
@@ -129,7 +136,7 @@ async def node_evaluate(state: EvalState, config: RunnableConfig) -> dict:
             HumanMessage(content=f"[관찰 번호: {obs_num}번째]\n[관찰문]: {observation_text}"),
             node_msgs[-1],
         ],
-        "planning_goal": extraction.planning_goal,
+        "feedback_strategy": extraction.feedback_strategy,
         "level_score": extraction.level_score,
         "objectivity_scores": extraction.objectivity_scores,
         "sense": extraction.sense,
@@ -161,7 +168,7 @@ async def node_feedback(state: EvalState, config: RunnableConfig) -> dict:
         f"관찰 지식의 객관도: {scores} (합계: {sum(scores)}점)\n"
         f"관찰 유형: <{state['sense']}, {state['method']}, {state['measurement']}> "
         f"<{state['scope']}, {state['comparison']}, {state['time_dim']}>\n"
-        f"Planning 목표 (다음에 시도할 관찰 방법): {state['planning_goal']}"
+        f"피드백 전략 (다음 관찰 방향):\n{state['feedback_strategy']}"
     )
     response = await _model.ainvoke(
         [SystemMessage(content=NODE2_PROMPT), HumanMessage(content=context)],
@@ -184,7 +191,7 @@ async def node_record(state: EvalState, config: RunnableConfig) -> dict:
         f"수준 {state['level_score']}점, 객관도 {scores} (합계: {sum(scores)}점), "
         f"유형: <{state['sense']}, {state['method']}, {state['measurement']}> "
         f"<{state['scope']}, {state['comparison']}, {state['time_dim']}>, "
-        f"Planning 목표: {state['planning_goal']}"
+        f"피드백 전략: {state['feedback_strategy']}"
     )
     await asyncio.gather(
         write_to_sheet.ainvoke({

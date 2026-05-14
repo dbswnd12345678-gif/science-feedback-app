@@ -98,7 +98,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "student_id": student_id,
                 "obs_num": obs_num,
                 "observation_text": observation,
-                "planning_goal": "",
+                "feedback_strategy": "",
                 "level_score": 0,
                 "objectivity_scores": [0],
                 "sense": "",
