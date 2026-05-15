@@ -16,7 +16,6 @@ from langgraph.graph.message import add_messages
 from prompts import NODE1_PROMPT, NODE2_PROMPT
 from tools import (
     get_scoring_criteria,
-    get_feedback_criteria,
     get_classification_criteria,
     write_to_sheet,
     get_student_memory,
@@ -84,7 +83,6 @@ _extraction_model = ChatAnthropic(model="claude-sonnet-4-5", temperature=0, stre
 _eval_tools = [
     get_student_memory,
     get_scoring_criteria,
-    get_feedback_criteria,
     get_classification_criteria,
 ]
 _eval_tools_map = {t.name: t for t in _eval_tools}
