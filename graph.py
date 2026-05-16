@@ -7,7 +7,9 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 
+import os
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
@@ -74,11 +76,28 @@ class EvalExtraction(BaseModel):
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-# 스트리밍 모델: Node 1 Tool 루프 + Node 2 피드백 생성에 사용
-_model = ChatAnthropic(model="claude-sonnet-4-5", temperature=0)
+_HF_BASE  = "https://router.huggingface.co/v1"
+_HF_MODEL = "Qwen/Qwen3.6-35B-A3B:fastest"
 
-# 비스트리밍 모델: 구조화 추출 전용 (on_chat_model_stream 이벤트 미발생 → 학생에게 노출 없음)
-_extraction_model = ChatAnthropic(model="claude-sonnet-4-5", temperature=0, streaming=False)
+# Node 1 Tool 루프용 (Qwen — HuggingFace Inference Provider, 스트리밍)
+_node1_model = ChatOpenAI(
+    model=_HF_MODEL,
+    base_url=_HF_BASE,
+    api_key=os.environ["HF_TOKEN"],
+    temperature=0,
+)
+
+# Node 1 구조화 추출용 (Qwen — 비스트리밍, 학생에게 노출 없음)
+_extraction_model = ChatOpenAI(
+    model=_HF_MODEL,
+    base_url=_HF_BASE,
+    api_key=os.environ["HF_TOKEN"],
+    temperature=0,
+    streaming=False,
+)
+
+# Node 2 피드백 생성용 (Claude 유지 — 한국어 품질 보장)
+_model = ChatAnthropic(model="claude-sonnet-4-5", temperature=0)
 
 _eval_tools = [
     get_student_memory,
@@ -86,7 +105,7 @@ _eval_tools = [
     get_classification_criteria,
 ]
 _eval_tools_map = {t.name: t for t in _eval_tools}
-_eval_model = _model.bind_tools(_eval_tools)
+_eval_model = _node1_model.bind_tools(_eval_tools)
 _extractor = _extraction_model.with_structured_output(EvalExtraction)
 
 
