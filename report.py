@@ -4,7 +4,7 @@
 데이터 소스:
   - Google Sheets: 관찰 시각(O열), 관찰 문장(P열), 관찰 유형(Q열),
                    수준 점수(R열), ΣDO_n(S열),
-                   최종 OQ_A(T13), 관찰 다양도 D(U13),
+                   관찰 다양도 D(T13), 최종 OQ_A(U13),
                    분류 행렬(D6:K25)
   - Mem0: 장기 기억 패턴 요약
   - Claude: 성장 내러티브 생성 (단일 LLM 호출)
@@ -126,7 +126,7 @@ async def generate_report(student_id: str) -> dict:
                 }
             )
 
-        # T13: 최종 OQ_A, U13: 관찰 다양도 D
+        # T13: 관찰 다양도 D, U13: 최종 OQ_A
         final_result = (
             service.spreadsheets()
             .values()
@@ -137,8 +137,8 @@ async def generate_report(student_id: str) -> dict:
             .execute()
         )
         final_row = final_result.get("values", [[]])[0] if final_result.get("values") else []
-        final_oq_a  = float(final_row[0]) if len(final_row) > 0 and final_row[0] != "" else None
-        diversity_d = int(final_row[1])   if len(final_row) > 1 and final_row[1] != "" else None
+        diversity_d = int(final_row[0])    if len(final_row) > 0 and final_row[0] != "" else None
+        final_oq_a  = float(final_row[1]) if len(final_row) > 1 and final_row[1] != "" else None
 
         # D6:K25 — 분류 행렬 (20행 × 8열)
         matrix_result = (

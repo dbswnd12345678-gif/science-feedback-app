@@ -182,7 +182,8 @@ def write_to_sheet(
     1. 6차원 분류 행렬 셀 카운트 +1
     2. O열: 관찰 시각(KST), P열: 관찰 문장(태그 제외), Q열: 관찰 유형(태그)
     3. R열: 관찰의 수준(LE_n), S열: 독립 정보별 객관도 합(ΣDO_n)
-    4. 10번째 관찰 완료 시 OQ_A = Σ(LE_n × ΣDO_n) × D 를 T13, D를 U13에 기록
+    4. 10번째 관찰 완료 시 D(관찰 다양도)를 T13, OQ_A = Σ(LE_n × ΣDO_n) × D 를 U13에 기록
+       T1/U1 헤더("관찰의 다양도"/"절대적 관찰력지수")도 함께 기록
     학생 탭이 없으면 시트1을 복제하여 자동 생성합니다.
     예외가 발생해도 항상 문자열을 반환합니다(LangGraph ToolMessage 보장).
     """
@@ -286,9 +287,10 @@ def write_to_sheet(
 
                 oq_a = round(oq_sum * d_count, 2)
                 updates.extend([
-                    {"range": _safe_range(sheet_title, "S13"), "values": [["최종 관찰력 지수"]]},
-                    {"range": _safe_range(sheet_title, "T13"), "values": [[oq_a]]},
-                    {"range": _safe_range(sheet_title, "U13"), "values": [[d_count]]},
+                    {"range": _safe_range(sheet_title, "T1"),  "values": [["관찰의 다양도"]]},
+                    {"range": _safe_range(sheet_title, "U1"),  "values": [["절대적 관찰력지수"]]},
+                    {"range": _safe_range(sheet_title, "T13"), "values": [[d_count]]},
+                    {"range": _safe_range(sheet_title, "U13"), "values": [[oq_a]]},
                 ])
 
         service.spreadsheets().values().batchUpdate(
