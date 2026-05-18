@@ -353,3 +353,32 @@ def update_student_memory(student_id: str, summary: str) -> str:
 
     except Exception as e:
         return f"장기 기억 저장 실패: {type(e).__name__}: {str(e)[:200]}"
+
+
+def get_student_obs_count(student_id: str) -> int:
+    """
+    학생 시트의 P열(관찰 문장)에서 채워진 행 수를 반환한다.
+    서버 재시작 후 obs_num 복원에 사용. 시트가 없으면 0 반환.
+    """
+    try:
+        spreadsheet_id = os.environ["GOOGLE_SHEETS_ID"]
+        service = _get_sheets_service()
+
+        meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        titles = [s["properties"]["title"] for s in meta["sheets"]]
+        if student_id not in titles:
+            return 0
+
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=_safe_range(student_id, "P2:P11"),
+            )
+            .execute()
+        )
+        rows = result.get("values", [])
+        return sum(1 for r in rows if r and r[0].strip())
+    except Exception:
+        return 0

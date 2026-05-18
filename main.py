@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from graph import build_agent, EvalState
 from report import generate_report
+from tools import get_student_obs_count
 
 # 전역 에이전트 (lifespan에서 초기화)
 agent = None
@@ -88,8 +89,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # 학번을 config로 분리 — HumanMessage에 학번을 포함하면 LLM이 인사말에서 학번을 사용함
             config = {"configurable": {"thread_id": student_id, "student_id": student_id}}
 
-            # 학생별 관찰 횟수 증가 (서버 재시작 전까지 누적)
-            _obs_counters[student_id] = _obs_counters.get(student_id, 0) + 1
+            # 학생별 관찰 횟수: 서버 재시작 후 첫 접속 시 Google Sheets에서 복원
+            if student_id not in _obs_counters:
+                _obs_counters[student_id] = get_student_obs_count(student_id)
+            _obs_counters[student_id] += 1
             obs_num = _obs_counters[student_id]
 
             # 3-노드 StateGraph에 전달할 초기 상태
